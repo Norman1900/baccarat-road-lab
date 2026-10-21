@@ -1,45 +1,44 @@
-/* Baccarat Road Lab — research prototype, no predictive edge claimed */
-(function(root,factory){const obj=factory();if(typeof module==='object'&&module.exports)module.exports=obj;root.RoadAnalyzer=obj;})(typeof window!=='undefined'?window:globalThis,function(){
- const norm=x=>(x||[]).map(y=>String(y).toUpperCase()).filter(x=>['B','P','T'].includes(x));
- const invert=x=>x==='B'?'P':x==='P'?'B':null;
- function runs(s, completedOnly=false){let arr=[];for(const x of s){let last=arr[arr.length-1];if(last&&last.side===x){last.n++;}else arr.push({side:x,n:1});} if(completedOnly&&arr.length) arr=arr.slice(0,-1);return arr;}
- function tally(s){const a=s.filter(x=>x!=='T');let O=0,R=0;for(let i=1;i<a.length;i++)a[i]===a[i-1]?R++:O++;return {B:a.filter(x=>x==='B').length,P:a.filter(x=>x==='P').length,T:s.filter(x=>x==='T').length,n:a.length,O,R,or:O-R,oRate:(O+R)?O/(O+R):null,run:runs(a)};}
- function stats(s){const z=tally(s);const completed=runs(s.filter(x=>x!=='T'),true);const count={one:0,two:0,three:0,four:0};for(const r of completed){if(r.n===1)count.one++;else if(r.n===2)count.two++;else if(r.n===3)count.three++;else count.four++;}return {...z,completed:completed.length,count,sap:{one:count.one,two:count.two*2,three:count.three*4,four:count.four*8},open:z.run.at(-1)||null};}
- function classify(sequence, lengthCap){let s=sequence.filter(x=>x!=='T');if(lengthCap)s=s.slice(-lengthCap);const d=stats(s), n=d.completed, c=d.count;const one=n?c.one/n:0,two=n?c.two/n:0,three=n?c.three/n:0,four=n?c.four/n:0;const last=s[s.length-1]||null;
-  if(s.length<10)return {kind:'insufficient',label:'样本不足',desc:'有效庄闲少于10手',d,signals:[]};
-  const signals=[]; if(d.oRate>=.7)signals.push('近期转换较密');if(d.oRate<=.35)signals.push('近期重复较密');if(n>=4&&one>=.55)signals.push('单连集中');if(n>=3&&two>=.45)signals.push('二连集中');if(n>=3&&three>=.34)signals.push('三连较多');if(c.four>=2||four>=.23&&n>=4)signals.push('四连以上较多');
-  // Deterministic, conservative classifications. Not a validated Ellis threshold.
-  let kind='mixed',desc='暂未发现单一主导结构';
-  if((d.oRate>=.72&&n>=3)||(n>=5&&one>=.6&&d.oRate>=.63)){kind='O';desc='历史走势中转换/单连较集中';}
-  else if((d.oRate<=.32&&n>=2)||(c.four>=2&&d.oRate<=.42)){kind='R';desc='历史走势中重复/长连较集中';}
-  else if(n>=4&&two>=.45&&d.oRate>=.35&&d.oRate<=.7){kind='N';desc='中性型候选：二连段较集中';}
-  return {kind,label:{O:'O · 偏转换',N:'N · 二连型',R:'R · 偏重复',mixed:'混合 / 未归类'}[kind],desc,d,signals};
- }
- function directions(effective){const last=effective.at(-1),before=effective.at(-2);return {R:last||null,O:invert(last),T:before||null,OT:invert(before)};}
- function evaluate(raw){const seq=norm(raw),eff=seq.filter(x=>x!=='T');const whole=classify(eff),recent=classify(eff,14),previous=eff.length>=24?classify(eff.slice(-28,-14)):null;const W=stats(seq);const dirs=directions(eff);const r=recent.d; const total=r.completed,c=r.count;
- const notes=[];let system='未确定',vote=null,key='uncertain',grade='无法判定';
- if(eff.length<20)notes.push('有效结果不足20手：暂不进行系统筛选。');
- else if(recent.kind==='mixed'||recent.kind==='insufficient')notes.push('最近14手尚不能明确归类，不强行指定系统。');
- else if(previous&&previous.kind!=='mixed'&&previous.kind!==recent.kind)notes.push('最近14手与前14手分类不一致：可能变路，暂缓系统匹配。');
- else if(whole.kind!=='mixed'&&whole.kind!==recent.kind&&r.completed<7)notes.push('整靴和近期分类冲突，当前确认信息不足。');
- else {
-  const n=total,one=n?c.one/n:0,two=n?c.two/n:0,three=n?c.three/n:0;
-  const high3=n>=4&&c.three>=2&&three>=.35;
-  const combined3=n>=5&&c.one>=1&&c.two>=1&&c.three>=1&&one>=.18&&two>=.18&&three>=.18;
-  // Unverified variants are not assigned an invented directional algorithm.
-  if(high3){system='OTB4L+（规则未核实）';notes.push('三连事件集中，符合Ellis历史OTB4L+候选；没有经核实的完整下一手规则。');}
-  else if(combined3&&recent.kind==='O'){system='S40M3（规则未核实）';notes.push('单连、二连、三连都出现；第三模式具体触发条件未核实。');}
-  else if(recent.kind==='O'&&r.oRate>=.72){system='基础 O 法（S40家族）';vote=dirs.O;grade='结构匹配';key='O';notes.push('最近14手转换占比较高，按基础Opposite规则取上一手反面；不等于完整System 40。');}
-  else if(recent.kind==='N'&&n>=4&&two>=.45){system='OTB4L';vote=dirs.OT;grade='结构匹配';key='OT';notes.push('近期二连集中，按OTB4L取倒数第二手的相反方。');}
-  else if(recent.kind==='R'&&c.four>=1&&r.oRate<=.32){system='Repeat';vote=dirs.R;grade='结构匹配';key='R';notes.push('近期长连续段和重复状态较明显，按Repeat跟上一手。');}
-  else if(recent.kind==='R'&&n>=3&&c.two===0&&c.one>=1&&c.four>=1){system='TB4L';vote=dirs.T;grade='结构匹配';key='T';notes.push('二连缺少，同时可见单连与长连，按TB4L取倒数第二手。');}
-  else notes.push('当前分类不足以唯一选出一个已完整定义的基础系统。');
- }
- if(W.B>=2*W.P&&W.P>=3)notes.push('庄的历史次数至少为闲的2倍；这是Strong Side描述，非额外方向信号。');
- else if(W.P>=2*W.B&&W.B>=3)notes.push('闲的历史次数至少为庄的2倍；这是Strong Side描述，非额外方向信号。');
- if(vote&&grade!=='结构匹配'){vote=null;key='uncertain';}
- return {seq,eff,whole,recent,previous,all:W,dirs,system,vote,key,grade,notes};
- }
- function parse(text){const s=String(text||'').toUpperCase().replace(/BANKER/g,'B').replace(/PLAYER/g,'P').replace(/TIE/g,'T').replace(/庄/g,'B').replace(/闲/g,'P').replace(/和/g,'T');return s.match(/[BPT]/g)||[];}
- return {norm,parse,runs,tally,stats,classify,directions,evaluate};
+/* Baccarat Road Lab 2.0 — deterministic road analytics. Historical matching ≠ predictive proof. */
+(function(root,factory){const o=factory();if(typeof module==='object'&&module.exports)module.exports=o;root.RoadAnalyzer=o;})(typeof window!=='undefined'?window:globalThis,function(){
+'use strict';
+const invert=x=>x==='B'?'P':x==='P'?'B':null;
+const norm=x=>(Array.isArray(x)?x:[]).map(v=>String(v).toUpperCase()).filter(v=>'BPT'.includes(v));
+function parse(t){const s=String(t||'').toUpperCase().replace(/BANKER/g,'B').replace(/PLAYER/g,'P').replace(/TIE/g,'T').replace(/庄/g,'B').replace(/閒/g,'P').replace(/闲/g,'P').replace(/和/g,'T');return s.match(/[BPT]/g)||[];}
+function runs(e){const a=[];for(const side of e){let z=a.at(-1);if(z&&z.side===side)z.n++;else a.push({side,n:1});}return a;}
+function tall(e){const B=e.filter(x=>x==='B').length,P=e.filter(x=>x==='P').length;let O=0,R=0;for(let i=1;i<e.length;i++)e[i]===e[i-1]?R++:O++;return {B,P,O,R,n:e.length,oRate:O+R?O/(O+R):null,run:runs(e)};}
+function stats(raw){const seq=norm(raw),eff=seq.filter(x=>x!=='T'),t=tall(eff),full=runs(eff),closed=full.slice(0,-1),c={one:0,two:0,three:0,four:0};for(const r of closed){if(r.n===1)c.one++;else if(r.n===2)c.two++;else if(r.n===3)c.three++;else c.four++;}return {...t,T:seq.length-eff.length,completed:closed.length,count:c,sap:{one:c.one,two:c.two*2,three:c.three*4,four:c.four*8},open:full.at(-1)||null};}
+function classify(raw){const s=stats(raw),n=s.completed,c=s.count,one=n?c.one/n:0,two=n?c.two/n:0;
+let kind='mixed';if(s.n<10)kind='low';else if((s.oRate>=.72&&n>=3)||(one>=.60&&n>=5&&s.oRate>=.62))kind='O';else if((s.oRate<=.32&&n>=2)||(c.four>=2&&s.oRate<=.42))kind='R';else if(n>=4&&two>=.43&&s.oRate>=.33&&s.oRate<=.73)kind='N';return {kind,label:({O:'O · 偏转换',R:'R · 偏重复',N:'N · 二连集中',low:'数据不足',mixed:'混合 / 未归类'})[kind],data:s};}
+function directions(e){const x=e.at(-1)||null,y=e.at(-2)||null;return {R:x,O:invert(x),T:y,OT:invert(y)};}
+// Big Eye offset=1; Small Road offset=2; Cockroach Pig offset=3. Ties don't advance Big Road.
+function derived(e,offset){let marks=[],col=[];for(const side of e){let last=col.at(-1),newCol=!last||last.side!==side;if(newCol)col.push({side,n:1});else last.n++;
+const c=col.length-1,r=col[c].n-1;
+if(r===0){if(c>=offset+1)marks.push(col[c-1].n===col[c-offset-1].n?'R':'B');}
+else if(c>=offset){const prev=col[c-offset].n;marks.push(prev>=r+1?'R':prev===r?'B':'R');}}
+return marks;}
+function roadAnalysis(e){const roads=[1,2,3].map((offset,i)=>{const seq=derived(e,offset),last=seq.slice(-12),red=last.filter(x=>x==='R').length;return {name:['大眼仔','小路','曱甴路'][i],marks:seq,latest:seq.at(-1)||null,red,blue:last.length-red,n:last.length};});
+const whatIf={};for(const side of ['B','P']){const after=[...e,side];whatIf[side]=[1,2,3].map((offset,i)=>{const n=derived(after,offset),before=roads[i].marks.length;return n.length>before?n.at(-1):null;});}
+return {roads,whatIf,agreement:roads.every(x=>x.latest)&&roads.every(x=>x.latest===roads[0].latest)?(roads[0].latest==='R'?'三路近期末端均红':'三路近期末端均蓝'):'末端颜色不同或数据不足'};}
+function ciWilson(k,n,z=1.96){if(!n)return [0,1];const p=k/n,z2=z*z,den=1+z2/n,mid=(p+z2/(2*n))/den,hal=z*Math.sqrt((p*(1-p)+z2/(4*n))/n)/den;return [Math.max(0,mid-hal),Math.min(1,mid+hal)];}
+function transition(e){let v={R:{R:0,O:0},O:{R:0,O:0}},ors=[];for(let i=1;i<e.length;i++)ors.push(e[i]===e[i-1]?'R':'O');for(let i=1;i<ors.length;i++)v[ors[i-1]][ors[i]]++;return Object.fromEntries(['R','O'].map(k=>{const n=v[k].R+v[k].O;return [k,{...v[k],n,pO:(v[k].O+.5)/(n+1),ci:ciWilson(v[k].O,n)}];}));}
+function windowSummary(e,n){const s=e.slice(-n);return {size:s.length,...tall(s)};}
+function evaluate(raw,opts={}){const seq=norm(raw),e=seq.filter(x=>x!=='T'),d=stats(seq),whole=classify(e),recent=classify(e.slice(-14)),prev=classify(e.slice(-28,-14)),w10=windowSummary(e,11),w20=windowSummary(e,21),dir=directions(e),road=roadAnalysis(e),trans=transition(e);
+const notes=[],conflict=whole.kind!=='low'&&recent.kind!=='low'&&whole.kind!==recent.kind&&whole.kind!=='mixed'&&recent.kind!=='mixed';const shift=(w10.O+w10.R>=8&&w20.O+w20.R>=16&&Math.abs(w10.oRate-w20.oRate)>.26);
+let system='未确定',vote=null,key=null,why='历史数据不足以匹配单一系统';
+if(e.length<20)notes.push('有效结果不足20手，暂不匹配系统。');
+else if(recent.kind==='mixed'||recent.kind==='low')notes.push('近期结构不够明确。');
+else if((prev.kind!=='mixed'&&prev.kind!=='low'&&prev.kind!==recent.kind)||conflict&&shift)notes.push('近期与前段/整靴明显不一致，记录为潜在变路。');
+else {const c=recent.data.count,n=recent.data.completed;
+if(c.three>=2&&n>=5&&c.three/n>=.33){system='OTB4L+（附加规则未核实）';why='三连事件相对活跃，但缺少完整变体动作规则。';}
+else if(recent.kind==='O'&&recent.data.oRate>=.72){system='基础O（S40家族）';vote=dir.O;key='O';why='近期相邻结果以换边为主；按反上一手演示，不等于完整S40。';}
+else if(recent.kind==='N'&&c.two>=2){system='OTB4L';vote=dir.OT;key='OT';why='近期已完成二连比较集中；按倒数第二手反面演示。';}
+else if(recent.kind==='R'&&c.two===0&&c.one>0&&c.four>0){system='TB4L';vote=dir.T;key='T';why='近期单连和较长连续段并存，且没有二连；按倒数第二手相同方演示。';}
+else if(recent.kind==='R'&&recent.data.oRate<=.32){system='Repeat';vote=dir.R;key='R';why='近期重复较密；按上一手相同方演示。';}
+else notes.push('历史分类没有唯一匹配的已核实基础规则。');}
+if(conflict)notes.push('整靴与最近14手分类分歧。');if(shift)notes.push('最近约10次转换与最近约20次转换差异较大，存在变化迹象（非预测结论）。');
+let completeness=opts.totalHands?{reported:Number(opts.totalHands),observed:seq.length,partial:Number(opts.totalHands)>seq.length}:null;
+if(completeness?.partial)notes.push(`屏幕总局数${completeness.reported}，但识别到${seq.length}手：仅是可见路纸片段，不能当作完整靴统计。`);
+if(opts.photoTailOnly)notes.push('图片显示的珠盘区域可能只保留最近若干手；全靴标签仅基于可见历史。');
+return {seq,eff:e,all:d,whole,recent,prev,w10,w20,dir,road,trans,system,vote,key,why,conflict,shift,notes,completeness,classification:'研究性历史匹配',evidence:'未发现经独立样本验证的新增预测优势'};}
+return {invert,norm,parse,runs,stats,derived,roadAnalysis,transition,ciWilson,windowSummary,classify,directions,evaluate};
 });
